@@ -23,11 +23,81 @@ class SingKind k where
 class SingI (a :: k) where
   sing :: Sing a
 
+-- https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/Exp.hs#L52-96
+data Exp :: forall n. Ctx n -> Ty -> Type where
+  Var   :: Elem ctx ty -> Exp ctx ty
+  Lam   :: STy arg -> Exp (arg :> ctx) res -> Exp ctx (arg :-> res)
+  App   :: Exp ctx (arg :-> res) -> Exp ctx arg -> Exp ctx res
+  Let   :: Exp ctx rhs_ty -> Exp (rhs_ty :> ctx) body_ty -> Exp ctx body_ty
+  Arith :: Exp ctx TInt -> ArithOp ty -> Exp ctx TInt -> Exp ctx ty
+  Cond  :: Exp ctx TBool -> Exp ctx ty -> Exp ctx ty -> Exp ctx ty
+  Fix   :: Exp ctx (ty :-> ty) -> Exp ctx ty
+  IntE  :: Int -> Exp ctx TInt
+  BoolE :: Bool -> Exp ctx TBool
+
+deriving instance Show (Exp ctx ty)
+
+----------------------------------------------------
+-- | Informative equality on expressions
+eqExp :: Exp ctx ty1 -> Exp ctx ty2 -> Maybe (ty1 :~: ty2)
+eqExp = go
+  where
+    go :: Exp ctx ty1 -> Exp ctx ty2 -> Maybe (ty1 :~: ty2)
+    go (Var v1) (Var v2) = eqElem v1 v2
+    go (Lam t1 b1) (Lam t2 b2) = do Refl <- testEquality t1 t2
+                                    Refl <- go b1 b2
+                                    return Refl
+    go (App f1 a1) (App f2 a2) = do Refl <- go f1 f2
+                                    Refl <- go a1 a2
+                                    return Refl
+    go (Let e1 b1) (Let e2 b2) = do Refl <- go e1 e2
+                                    Refl <- go b1 b2
+                                    return Refl
+    go (Arith l1 op1 r1) (Arith l2 op2 r2) = do Refl <- go l1 l2
+                                                Refl <- eqArithOp op1 op2
+                                                Refl <- go r1 r2
+                                                return Refl
+    go (Cond c1 t1 f1) (Cond c2 t2 f2) = do Refl <- go c1 c2
+                                            Refl <- go t1 t2
+                                            Refl <- go f1 f2
+                                            return Refl
+    go (Fix b1) (Fix b2) = do Refl <- go b1 b2
+                              return Refl
+    go (IntE i1) (IntE i2) | i1 == i2  = Just Refl
+                           | otherwise = Nothing
+    go (BoolE b1) (BoolE b2) | b1 == b2  = Just Refl
+                             | otherwise = Nothing
+
+    go _ _ = Nothing
+
 
 data SVec :: forall (a :: Type) (n :: Nat). Vec a n -> Type where
   SVNil :: SVec VNil
   (:%>) :: Sing a -> Sing as -> SVec (a :> as)
 infixr 5 :%>
+
+deriving instance ShowSingVec v => Show (SVec v)
+
+instance SingKind a => SingKind (Vec a n) where
+  type Sing = SVec
+
+  fromSing SVNil     = VNil
+  fromSing (h :%> t) = fromSing h :> fromSing t
+
+  toSing VNil cont = cont SVNil
+  toSing (h :> t) cont = toSing h $ \ sh ->
+                         toSing t $ \ st ->
+                         cont (sh :%> st)
+
+instance SingI VNil where
+  sing = SVNil
+instance (SingI h, SingI t) => SingI (h :> t) where
+  sing = sing :%> sing
+
+-- | Make a Show constraint for a singleton vector
+type family ShowSingVec (v :: Vec a n) :: Constraint where
+  ShowSingVec VNil      = ()
+  ShowSingVec (x :> xs) = (Show (Sing x), ShowSingVec xs)
 
 -- https://gitlab.com/goldfirere/stitch/-/blob/hs2020/src/Language/Stitch/Exp.hs#L158-171
 -- | Extract the type of an expression
@@ -73,7 +143,6 @@ infixl 5 :<<:
 
 ex2 :: Lets ((Int -> Int) :> Bool :> Int :> VNil)
 ex2 = LNil :<<: IntE 5 :<<: BoolE False :<<: Lam (typeRep @Int) (Var (ES (ES EZ)))
-
 
 -- Vec: https://gitlab.com/goldfirere/stitch/-/blob/hs2020/src/Language/Stitch/Data/Vec.hs#L12-15
 data Vec :: Type -> Nat -> Type where
