@@ -316,11 +316,6 @@ unpackEx (Ex x) k = k x
 mapEx :: (forall i. a i -> b i) -> Ex a -> Ex b
 mapEx f (Ex x) = Ex (f x)
 
--- | Like 'Ex', but stores a singleton describing the
--- existentially bound index
-data SingEx :: (k -> Type) -> Type where
-  SingEx :: Sing i -> a i -> SingEx a
-
 -- | Pack an existential with an explicit singleton
 packSingEx :: Sing i -> a i -> SingEx a
 packSingEx = SingEx

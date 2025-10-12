@@ -27,6 +27,56 @@ type Ctx n = Vec Ty n
 
 type KnownLength (ctx :: Ctx n) = SingI n
 
+-- | @Exp ctx ty@ is a well-typed expression of type @ty@ in context
+-- @ctx@. Note that a context is a list of types, where a type's index
+-- in the list indicates the de Bruijn index of the associated term-level
+-- variable.
+data Exp :: forall n. Ctx n -> Ty -> Type where
+  Var   :: Elem ctx ty -> Exp ctx ty
+  Lam   :: STy arg -> Exp (arg :> ctx) res -> Exp ctx (arg :-> res)
+  App   :: Exp ctx (arg :-> res) -> Exp ctx arg -> Exp ctx res
+  Let   :: Exp ctx rhs_ty -> Exp (rhs_ty :> ctx) body_ty -> Exp ctx body_ty
+  Arith :: Exp ctx TInt -> ArithOp ty -> Exp ctx TInt -> Exp ctx ty
+  Cond  :: Exp ctx TBool -> Exp ctx ty -> Exp ctx ty -> Exp ctx ty
+  Fix   :: Exp ctx (ty :-> ty) -> Exp ctx ty
+  IntE  :: Int -> Exp ctx TInt
+  BoolE :: Bool -> Exp ctx TBool
+
+deriving instance Show (Exp ctx ty)
+
+-- https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/Data/Vec.hs#L42-51
+-- | @Length xs@ is a runtime witness for how long a vector @xs@ is.
+-- @LZ :: Length xs@ says that @xs@ is empty.
+-- @LS len :: Length xs@ tells you that @xs@ has one more element
+-- than @len@ says.
+-- A term of type @Length xs@ also serves as a proxy for @xs@.
+data Length :: forall a n. Vec a n -> Type where
+  LZ :: Length VNil
+  LS :: Length xs -> Length (x :> xs)
+
+-- https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/Data/Vec.hs#L12-15
+data Vec :: Type -> Nat -> Type where
+  VNil :: Vec a Zero
+  (:>) :: a -> Vec a n -> Vec a (Succ n)
+infixr 5 :>
+
+-- | Store a value in both expression form and value form.
+-- The duplication avoids conversions later without losing the
+-- tagless aspect of values. Note that the 'ValuePair' constructor
+-- should not considered a value tag; this type could be inlined into
+-- an unboxed tuple with the same semantics; the only loss would
+-- be syntactic cleanliness.
+data ValuePair :: Ty -> Type where
+  ValuePair :: { expr :: Exp VNil ty
+               , val  :: Value ty
+               } -> ValuePair ty
+
+-- | The result of stepping is either a reduction or the detection
+-- of a value.
+data StepResult :: Ty -> Type where
+  Step  :: Exp VNil ty -> StepResult ty
+  Value :: ValuePair ty -> StepResult ty
+
 -- implicit singletons
 class SingI (a :: k) where
   sing :: Sing a
@@ -53,6 +103,20 @@ instance SingI TBool where
   sing = SBool
 instance (SingI a, SingI r) => SingI (a :-> r) where
   sing = sing ::-> sing
+
+-- | Informative equality on types
+instance TestEquality STy where
+  testEquality SInt SInt   = Just Refl
+  testEquality SBool SBool = Just Refl
+  testEquality (a1 ::-> r1) (a2 ::-> r2) = do
+    Refl <- testEquality a1 a2
+    Refl <- testEquality r1 r2
+    return Refl
+  testEquality _ _ = Nothing
+
+-- | Extract the result type of an STy known to be an arrow
+extractResType :: STy (arg :-> res) -> STy res
+extractResType (_ ::-> res) = res
 
 
 instance KnownLength ctx => Hashable (Exp ctx ty) where
@@ -109,22 +173,6 @@ data SNat :: Nat -> Type where
   SZero :: SNat Zero
   SSucc :: SNat n -> SNat (Succ n)
 
--- https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/Data/Vec.hs#L12-15
-data Vec :: Type -> Nat -> Type where
-  VNil :: Vec a Zero
-  (:>) :: a -> Vec a n -> Vec a (Succ n)
-infixr 5 :>
-
--- https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/Data/Vec.hs#L42-51
--- | @Length xs@ is a runtime witness for how long a vector @xs@ is.
--- @LZ :: Length xs@ says that @xs@ is empty.
--- @LS len :: Length xs@ tells you that @xs@ has one more element
--- than @len@ says.
--- A term of type @Length xs@ also serves as a proxy for @xs@.
-data Length :: forall a n. Vec a n -> Type where
-  LZ :: Length VNil
-  LS :: Length xs -> Length (x :> xs)
-
 deriving instance Show (Length xs)
 
 -- https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/Data/Vec.hs#L55-61
@@ -153,4 +201,36 @@ instance (forall i. Show (a i)) => Show (Ex a) where
 data SingEx :: (k -> Type) -> Type where
   SingEx :: Sing i -> a i -> SingEx a
 
+data Vec :: Type -> Nat -> Type where
+  VNil :: Vec a Zero
+  (:>) :: a -> Vec a n -> Vec a (Succ n)
+infixr 5 :>
 
+deriving instance Show a => Show (Vec a n)
+
+(!!!) :: Vec a n -> Fin n -> a
+-- RAE: Oy. Need to reverse order b/c of laziness
+vec !!! fin = case (fin, vec) of
+  (FZ,   x :> _)  -> x
+  (FS n, _ :> xs) -> xs !!! n
+
+type family (v :: Vec a n) !!! (fin :: Fin n) :: a where
+  (x :> _) !!!  FZ       = x
+  (_ :> xs) !!! (FS fin) = xs !!! fin
+
+type family (v1 :: Vec a n) +++ (v2 :: Vec a m) :: Vec a (n + m) where
+  (_ :: Vec a Zero) +++ v2 = v2
+  (x :> xs)         +++ v2 = x :> (xs +++ v2)
+infixr 5 +++
+
+
+-- | Pack a type whose last index is to be existentially bound
+data Ex :: (k -> Type) -> Type where
+  Ex :: a i -> Ex a
+
+data Nat = Zero | Succ Nat
+  deriving Show
+
+data Fin :: Nat -> Type where
+  FZ :: Fin (Succ n)
+  FS :: Fin n -> Fin (Succ n)
