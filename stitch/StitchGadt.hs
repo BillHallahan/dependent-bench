@@ -1,11 +1,36 @@
-{-# LANGUAGE RankNTypes, PolyKinds, DataKinds, TypeFamilies, TypeOperators, GADTs, TypeApplications,
-ScopedTypeVariables, InstanceSigs, StandaloneDeriving, FlexibleContexts, UndecidableInstances, FlexibleInstances #-}
+{-# LANGUAGE RankNTypes, PolyKinds, DataKinds, TypeFamilies, TypeOperators,
+             GADTs, TypeApplications,
+             ScopedTypeVariables, InstanceSigs, StandaloneDeriving,
+             FlexibleContexts, UndecidableInstances, FlexibleInstances,
+             ViewPatterns, LambdaCase, EmptyCase #-}
+
 -- This file gather GADTs in stitch
 -- stitch repo can be found in: https://gitlab.com/goldfirere/stitch/-/tree/hs2020 
-import Data.Kind
-import Language.Stitch.Data.Vec
-import Language.Stitch.Data.Nat
+module StitchGadt where
 
+import Data.Kind
+import Data.Hashable
+import Data.Type.Equality
+import GHC.Generics
+import Data.Proxy
+import Data.Functor.Const
+
+
+class SingKind k where
+  -- It's a bit cleaner than the original approach to
+  -- use a type family than a data family
+  type Sing :: k -> Type
+
+  -- | Convert a singleton to unrefined data
+  fromSing :: forall (a :: k). Sing a -> k
+
+  -- | Convert unrefined data to a singleton, in continuation-passing
+  -- style.
+  toSing :: k -> (forall (a :: k). Sing a -> r) -> r
+
+-- implicit singletons
+class SingI (a :: k) where
+  sing :: Sing a
 
 -- https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/Type.hs#L30-42
 -- | The type of a Stitch expression
@@ -26,6 +51,25 @@ infixr 0 ::->
 type Ctx n = Vec Ty n
 
 type KnownLength (ctx :: Ctx n) = SingI n
+
+-- | An @ArithOp ty@ is an operator on numbers that produces a result
+-- of type @ty@
+data ArithOp ty where
+  Plus, Minus, Times, Divide, Mod        :: ArithOp TInt
+  Less, LessE, Greater, GreaterE, Equals :: ArithOp TBool
+
+-- | Extract the result type of an Op
+arithType :: ArithOp ty -> STy ty
+arithType Plus     = sing
+arithType Minus    = sing
+arithType Times    = sing
+arithType Divide   = sing
+arithType Mod      = sing
+arithType Less     = sing
+arithType LessE    = sing
+arithType Greater  = sing
+arithType GreaterE = sing
+arithType Equals   = sing
 
 -- | @Exp ctx ty@ is a well-typed expression of type @ty@ in context
 -- @ctx@. Note that a context is a list of types, where a type's index
@@ -60,6 +104,76 @@ data Vec :: Type -> Nat -> Type where
   (:>) :: a -> Vec a n -> Vec a (Succ n)
 infixr 5 :>
 
+deriving instance Show a => Show (Vec a n)
+
+(!!!) :: Vec a n -> Fin n -> a
+-- RAE: Oy. Need to reverse order b/c of laziness
+vec !!! fin = case (fin, vec) of
+  (FZ,   x :> _)  -> x
+  (FS n, _ :> xs) -> xs !!! n
+
+type family (v :: Vec a n) !!! (fin :: Fin n) :: a where
+  (x :> _) !!!  FZ       = x
+  (_ :> xs) !!! (FS fin) = xs !!! fin
+
+type family (v1 :: Vec a n) +++ (v2 :: Vec a m) :: Vec a (n + m) where
+  (_ :: Vec a Zero) +++ v2 = v2
+  (x :> xs)         +++ v2 = x :> (xs +++ v2)
+infixr 5 +++
+
+
+deriving instance Show (Length xs)
+
+--------------------------------------------------------
+
+-- | @Elem xs x@ is evidence that @x@ is in the vector @xs@.
+-- @EZ :: Elem xs x@ is evidence that @x@ is the first element of @xs@.
+-- @ES ev :: Elem xs x@ is evidence that @x@ is one position later in
+-- @xs@ than is indicated in @ev@
+data Elem :: forall a n. Vec a n -> a -> Type where
+  EZ :: Elem (x :> xs) x
+  ES :: Elem xs x -> Elem (y :> xs) x
+
+deriving instance Show (Elem xs x)
+
+-- | Informative equality on Elems
+eqElem :: Elem xs x1 -> Elem xs x2 -> Maybe (x1 :~: x2)
+eqElem EZ EZ           = Just Refl
+eqElem (ES e1) (ES e2) = eqElem e1 e2
+eqElem _       _       = Nothing
+
+instance TestEquality (Elem xs) where
+  testEquality = eqElem
+
+-- | Convert an 'Elem' to a proper de Bruijn index
+elemToInt :: Elem ctx ty -> Int
+elemToInt EZ     = 0
+elemToInt (ES e) = 1 + elemToInt e
+
+-- | Convert an 'Elem' to a 'Fin'
+elemToFin :: Elem (ctx :: Vec a n) x -> Fin n
+elemToFin EZ     = FZ
+elemToFin (ES e) = FS (elemToFin e)
+
+-- | Weaken an 'Elem' to work against a larger vector.
+weakenElem :: Length prefix -> Elem xs x -> Elem (prefix +++ xs) x
+weakenElem LZ       e = e
+weakenElem (LS len) e = ES (weakenElem len e)
+
+-- | Strengthen an 'Elem' to work with a suffix of a vector. Fails when
+-- the element in question ('x') occurs in the 'prefix'.
+strengthenElem :: Length prefix -> Elem (prefix +++ xs) x -> Maybe (Elem xs x)
+strengthenElem LZ       e      = Just e
+strengthenElem (LS _)   EZ     = Nothing
+strengthenElem (LS len) (ES e) = strengthenElem len e
+
+-- | Well-typed closed values.
+type family Value t where
+  Value TInt      = Int
+  Value TBool     = Bool
+  Value (a :-> b) = Exp VNil a -> Exp VNil b
+
+
 -- | Store a value in both expression form and value form.
 -- The duplication avoids conversions later without losing the
 -- tagless aspect of values. Note that the 'ValuePair' constructor
@@ -76,10 +190,6 @@ data ValuePair :: Ty -> Type where
 data StepResult :: Ty -> Type where
   Step  :: Exp VNil ty -> StepResult ty
   Value :: ValuePair ty -> StepResult ty
-
--- implicit singletons
-class SingI (a :: k) where
-  sing :: Sing a
 
 instance Hashable (STy ty) where
   hashWithSalt s = hashWithSalt s . fromSing
@@ -139,6 +249,24 @@ instance KnownLength ctx => Hashable (Exp ctx ty) where
       go (IntE n)         = s `hashWithSalt` n
       go (BoolE b)        = s `hashWithSalt` b
 
+class IHashable t where
+    -- | Lift a hashing function through the type constructor.
+    ihashWithSalt :: Int -> t a -> Int
+
+    ihash :: t a -> Int
+    ihash = ihashWithSalt defaultSalt
+      where
+        -- from hashable package
+        defaultSalt = -2578643520546668380  -- 0xdc36d1615b7400a4
+
+instance IHashable Proxy where
+  ihashWithSalt = hashWithSalt
+  ihash = hash
+
+instance Hashable a => IHashable (Const a) where
+  ihashWithSalt s (Const x) = hashWithSalt s x
+  ihash (Const x) = hash x
+
 instance KnownLength ctx => IHashable (Exp ctx) where
   ihashWithSalt = hashWithSalt
   ihash = hash
@@ -149,7 +277,6 @@ instance KnownLength ctx => Hashable (Elem ctx ty) where
 instance KnownLength ctx => IHashable (Elem ctx) where
   ihashWithSalt = hashWithSalt
   ihash = hash
-
 
 
 -- find in https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/CSE.hs#L143-149
@@ -175,15 +302,6 @@ data SNat :: Nat -> Type where
 
 deriving instance Show (Length xs)
 
--- https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/Data/Vec.hs#L55-61
--- | @Elem xs x@ is evidence that @x@ is in the vector @xs@.
--- @EZ :: Elem xs x@ is evidence that @x@ is the first element of @xs@.
--- @ES ev :: Elem xs x@ is evidence that @x@ is one position later in
--- @xs@ than is indicated in @ev@
-data Elem :: forall a n. Vec a n -> a -> Type where
-  EZ :: Elem (x :> xs) x
-  ES :: Elem xs x -> Elem (y :> xs) x
-
 -- https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/Data/Exists.hs#L15-23
 -- | Pack a type whose last index is to be existentially bound
 data Ex :: (k -> Type) -> Type where
@@ -201,32 +319,7 @@ instance (forall i. Show (a i)) => Show (Ex a) where
 data SingEx :: (k -> Type) -> Type where
   SingEx :: Sing i -> a i -> SingEx a
 
-data Vec :: Type -> Nat -> Type where
-  VNil :: Vec a Zero
-  (:>) :: a -> Vec a n -> Vec a (Succ n)
-infixr 5 :>
-
 deriving instance Show a => Show (Vec a n)
-
-(!!!) :: Vec a n -> Fin n -> a
--- RAE: Oy. Need to reverse order b/c of laziness
-vec !!! fin = case (fin, vec) of
-  (FZ,   x :> _)  -> x
-  (FS n, _ :> xs) -> xs !!! n
-
-type family (v :: Vec a n) !!! (fin :: Fin n) :: a where
-  (x :> _) !!!  FZ       = x
-  (_ :> xs) !!! (FS fin) = xs !!! fin
-
-type family (v1 :: Vec a n) +++ (v2 :: Vec a m) :: Vec a (n + m) where
-  (_ :: Vec a Zero) +++ v2 = v2
-  (x :> xs)         +++ v2 = x :> (xs +++ v2)
-infixr 5 +++
-
-
--- | Pack a type whose last index is to be existentially bound
-data Ex :: (k -> Type) -> Type where
-  Ex :: a i -> Ex a
 
 data Nat = Zero | Succ Nat
   deriving Show

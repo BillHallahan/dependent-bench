@@ -1,15 +1,15 @@
 -- This file aims to find interesting benchmarks/functions from each gadt
 -- Note for finding gadt in the corresponding file, we use the command: 
 -- grep -R "data .* where" -n .
-
-{-# LANGUAGE RankNTypes, PolyKinds, DataKinds, TypeFamilies, TypeOperators, GADTs, TypeApplications,
-ScopedTypeVariables, InstanceSigs, StandaloneDeriving, FlexibleContexts, UndecidableInstances, FlexibleInstances #-}
+{-# LANGUAGE RankNTypes, TypeOperators, ScopedTypeVariables,
+             TypeFamilies, PolyKinds, TypeApplications,
+             ViewPatterns, DataKinds,
+             GADTs, LambdaCase, EmptyCase, StandaloneDeriving #-}
+module StitchBenchmarks where
 -- This file gather GADTs contain in stitch
 -- stitch repo can be found in: https://gitlab.com/goldfirere/stitch/-/tree/hs2020 
 import Data.Kind
-import Language.Stitch.Data.Vec
-import Language.Stitch.Data.Nat
-
+import StitchGadt
 
 -- find in https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/CSE.hs#L81-134 
 -- | Implements Step 1 from the general description of CSE, above
@@ -91,6 +91,37 @@ subst e = go LZ
     subst_var LZ       (ES v) = Var v
     subst_var (LS _)   EZ     = Var EZ
     subst_var (LS len) (ES v) = shift (subst_var len v)
+
+-- | Given a lambda and an expression, beta-reduce.
+apply :: ValuePair (arg :-> res) -> ValuePair arg -> Exp VNil res
+apply fun arg = val fun (expr arg)
+
+-- | Apply an arithmetic operator to two values.
+arith :: Int -> ArithOp ty -> Int -> Exp VNil ty
+arith n1 Plus     n2 = IntE $ n1 + n2
+arith n1 Minus    n2 = IntE $ n1 - n2
+arith n1 Times    n2 = IntE $ n1 * n2
+arith n1 Divide   n2 = IntE $ n1 `div` n2
+arith n1 Mod      n2 = IntE $ n1 `mod` n2
+arith n1 Less     n2 = BoolE $ n1 < n2
+arith n1 LessE    n2 = BoolE $ n1 <= n2
+arith n1 Greater  n2 = BoolE $ n1 > n2
+arith n1 GreaterE n2 = BoolE $ n1 >= n2
+arith n1 Equals   n2 = BoolE $ n1 == n2
+
+-- | Conditionally choose between two expressions
+cond :: Bool -> Exp VNil t -> Exp VNil t -> Exp VNil t
+cond True  e _ = e
+cond False _ e = e
+
+-- | Unroll a `fix` one level
+unfix :: ValuePair (ty :-> ty) -> Exp VNil ty
+unfix (ValuePair { expr = elam, val = vlam })
+  = vlam (Fix elam)
+
+-- | A well-typed variable in an empty context is impossible.
+impossibleVar :: Elem VNil x -> a
+impossibleVar = \case {}
 
 -- find in https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/Eval.hs#L116-126
 -- | Evaluate an expression, using big-step semantics.
