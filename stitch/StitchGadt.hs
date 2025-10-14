@@ -2,7 +2,7 @@
              GADTs, TypeApplications,
              ScopedTypeVariables, InstanceSigs, StandaloneDeriving,
              FlexibleContexts, UndecidableInstances, FlexibleInstances,
-             ViewPatterns, LambdaCase, EmptyCase #-}
+             ViewPatterns, LambdaCase, EmptyCase, ExplicitForAll, DeriveAnyClass #-}
 
 -- This file gather GADTs in stitch
 -- stitch repo can be found in: https://gitlab.com/goldfirere/stitch/-/tree/hs2020 
@@ -39,6 +39,9 @@ data Ty = TInt
         | Ty :-> Ty
   deriving (Show, Eq, Generic, Hashable)
 infixr 0 :->
+
+data Nat = Zero | Succ Nat
+  deriving Show
 
 -- | The singleton for a Stitch type
 data STy :: Ty -> Type where
@@ -86,7 +89,7 @@ data Exp :: forall n. Ctx n -> Ty -> Type where
   IntE  :: Int -> Exp ctx TInt
   BoolE :: Bool -> Exp ctx TBool
 
-deriving instance Show (Exp ctx ty)
+-- deriving instance Show (Exp ctx ty)
 
 -- https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/Data/Vec.hs#L42-51
 -- | @Length xs@ is a runtime witness for how long a vector @xs@ is.
@@ -104,7 +107,7 @@ data Vec :: Type -> Nat -> Type where
   (:>) :: a -> Vec a n -> Vec a (Succ n)
 infixr 5 :>
 
-deriving instance Show a => Show (Vec a n)
+-- deriving instance Show a => Show (Vec a n)
 
 (!!!) :: Vec a n -> Fin n -> a
 -- RAE: Oy. Need to reverse order b/c of laziness
@@ -112,17 +115,16 @@ vec !!! fin = case (fin, vec) of
   (FZ,   x :> _)  -> x
   (FS n, _ :> xs) -> xs !!! n
 
-type family (v :: Vec a n) !!! (fin :: Fin n) :: a where
-  (x :> _) !!!  FZ       = x
-  (_ :> xs) !!! (FS fin) = xs !!! fin
+-- type family (v :: Vec a n) !!! (fin :: Fin n) :: a where
+--   (x :> _) !!!  FZ       = x
+--   (_ :> xs) !!! (FS fin) = xs !!! fin
 
-type family (v1 :: Vec a n) +++ (v2 :: Vec a m) :: Vec a (n + m) where
-  (_ :: Vec a Zero) +++ v2 = v2
-  (x :> xs)         +++ v2 = x :> (xs +++ v2)
-infixr 5 +++
+-- type family (v1 :: Vec a n) +++ (v2 :: Vec a m) :: Vec a (n + m) where
+--   (_ :: Vec a Zero) +++ v2 = v2
+--   (x :> xs)         +++ v2 = x :> (xs +++ v2)
+-- infixr 5 +++
 
-
-deriving instance Show (Length xs)
+-- deriving instance Show (Length xs)
 
 --------------------------------------------------------
 
@@ -156,16 +158,16 @@ elemToFin EZ     = FZ
 elemToFin (ES e) = FS (elemToFin e)
 
 -- | Weaken an 'Elem' to work against a larger vector.
-weakenElem :: Length prefix -> Elem xs x -> Elem (prefix +++ xs) x
-weakenElem LZ       e = e
-weakenElem (LS len) e = ES (weakenElem len e)
+-- weakenElem :: Length prefix -> Elem xs x -> Elem (prefix +++ xs) x
+-- weakenElem LZ       e = e
+-- weakenElem (LS len) e = ES (weakenElem len e)
 
--- | Strengthen an 'Elem' to work with a suffix of a vector. Fails when
--- the element in question ('x') occurs in the 'prefix'.
-strengthenElem :: Length prefix -> Elem (prefix +++ xs) x -> Maybe (Elem xs x)
-strengthenElem LZ       e      = Just e
-strengthenElem (LS _)   EZ     = Nothing
-strengthenElem (LS len) (ES e) = strengthenElem len e
+-- -- | Strengthen an 'Elem' to work with a suffix of a vector. Fails when
+-- -- the element in question ('x') occurs in the 'prefix'.
+-- strengthenElem :: Length prefix -> Elem (prefix +++ xs) x -> Maybe (Elem xs x)
+-- strengthenElem LZ       e      = Just e
+-- strengthenElem (LS _)   EZ     = Nothing
+-- strengthenElem (LS len) (ES e) = strengthenElem len e
 
 -- | Well-typed closed values.
 type family Value t where
@@ -191,8 +193,8 @@ data StepResult :: Ty -> Type where
   Step  :: Exp VNil ty -> StepResult ty
   Value :: ValuePair ty -> StepResult ty
 
-instance Hashable (STy ty) where
-  hashWithSalt s = hashWithSalt s . fromSing
+-- instance Hashable (STy ty) where
+--   hashWithSalt s = hashWithSalt s . fromSing
 
 instance SingKind Ty where
   type Sing = STy
@@ -228,26 +230,32 @@ instance TestEquality STy where
 extractResType :: STy (arg :-> res) -> STy res
 extractResType (_ ::-> res) = res
 
+-- | The identity of a de Bruijn index comes from the difference between the size
+-- of the context and the value of the index. We use this when hashing so that,
+-- say, (#2 #3) is recognized as the same expression as the body of λ.(#3 #4).
+hashDeBruijn :: forall n (x :: Ty) (xs :: Ctx n). Int -> Elem xs x -> SNat n -> Int
+hashDeBruijn salt EZ     size_ctx         = hashWithSalt salt (snatToInt size_ctx)
+hashDeBruijn salt (ES e) (SSucc size_ctx) = hashDeBruijn salt e size_ctx
 
-instance KnownLength ctx => Hashable (Exp ctx ty) where
-  hashWithSalt s = go
-    where
-      go (Var e)          = hashDeBruijn s e sing
-      go (Lam ty body)    = s `hashWithSalt` ty
-                              `hashWithSalt` body
-      go (App e1 e2)      = s `hashWithSalt` e1
-                              `hashWithSalt` e2
-      go (Let e1 e2)      = s `hashWithSalt` e1
-                              `hashWithSalt` e2
-      go (Arith e1 op e2) = s `hashWithSalt` e1
-                              `hashWithSalt` op
-                              `hashWithSalt` e2
-      go (Cond c t f)     = s `hashWithSalt` c
-                              `hashWithSalt` t
-                              `hashWithSalt` f
-      go (Fix body)       = s `hashWithSalt` body
-      go (IntE n)         = s `hashWithSalt` n
-      go (BoolE b)        = s `hashWithSalt` b
+-- instance KnownLength ctx => Hashable (Exp ctx ty) where
+--   hashWithSalt s = go
+--     where
+--       go (Var e)          = hashDeBruijn s e sing
+--       go (Lam ty body)    = s `hashWithSalt` ty
+--                               `hashWithSalt` body
+--       go (App e1 e2)      = s `hashWithSalt` e1
+--                               `hashWithSalt` e2
+--       go (Let e1 e2)      = s `hashWithSalt` e1
+--                               `hashWithSalt` e2
+--       go (Arith e1 op e2) = s `hashWithSalt` e1
+--                               `hashWithSalt` op
+--                               `hashWithSalt` e2
+--       go (Cond c t f)     = s `hashWithSalt` c
+--                               `hashWithSalt` t
+--                               `hashWithSalt` f
+--       go (Fix body)       = s `hashWithSalt` body
+--       go (IntE n)         = s `hashWithSalt` n
+--       go (BoolE b)        = s `hashWithSalt` b
 
 class IHashable t where
     -- | Lift a hashing function through the type constructor.
@@ -267,16 +275,16 @@ instance Hashable a => IHashable (Const a) where
   ihashWithSalt s (Const x) = hashWithSalt s x
   ihash (Const x) = hash x
 
-instance KnownLength ctx => IHashable (Exp ctx) where
-  ihashWithSalt = hashWithSalt
-  ihash = hash
+-- instance KnownLength ctx => IHashable (Exp ctx) where
+--   ihashWithSalt = hashWithSalt
+--   ihash = hash
 
-instance KnownLength ctx => Hashable (Elem ctx ty) where
-  hashWithSalt s v = hashDeBruijn s v sing
+-- instance KnownLength ctx => Hashable (Elem ctx ty) where
+--   hashWithSalt s v = hashDeBruijn s v sing
 
-instance KnownLength ctx => IHashable (Elem ctx) where
-  ihashWithSalt = hashWithSalt
-  ihash = hash
+-- instance KnownLength ctx => IHashable (Elem ctx) where
+--   ihashWithSalt = hashWithSalt
+--   ihash = hash
 
 
 -- find in https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/CSE.hs#L143-149
@@ -307,12 +315,6 @@ deriving instance Show (Length xs)
 data Ex :: (k -> Type) -> Type where
   Ex :: a i -> Ex a
 
-instance (forall i. Read (a i)) => Read (Ex a) where
-  readsPrec prec s = fmap (first Ex) $ readsPrec prec s
-
-instance (forall i. Show (a i)) => Show (Ex a) where
-  show (Ex x) = show x
-
 -- https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/Data/Exists.hs#L37-40
 -- | Like 'Ex', but stores a singleton describing the
 -- existentially bound index
@@ -321,9 +323,23 @@ data SingEx :: (k -> Type) -> Type where
 
 deriving instance Show a => Show (Vec a n)
 
-data Nat = Zero | Succ Nat
-  deriving Show
+
+type family n + m where
+  Zero   + m = m
+  Succ n + m = Succ (n + m)
+
 
 data Fin :: Nat -> Type where
   FZ :: Fin (Succ n)
   FS :: Fin n -> Fin (Succ n)
+
+deriving instance Show (Fin n)
+
+finToInt :: Fin n -> Int
+finToInt FZ = 0
+finToInt (FS n) = 1 + finToInt n
+
+snatToInt :: SNat n -> Int
+snatToInt SZero     = 0
+snatToInt (SSucc n) = 1 + snatToInt n
+
