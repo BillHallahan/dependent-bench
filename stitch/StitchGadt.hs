@@ -9,7 +9,7 @@
 module StitchGadt where
 
 import Data.Kind
-import Data.Hashable
+-- import Data.Hashable
 import Data.Type.Equality
 import GHC.Generics
 import Data.Proxy
@@ -37,7 +37,7 @@ class SingI (a :: k) where
 data Ty = TInt
         | TBool
         | Ty :-> Ty
-  deriving (Show, Eq, Generic, Hashable)
+  deriving (Show, Eq, Generic)
 infixr 0 :->
 
 data Nat = Zero | Succ Nat
@@ -111,9 +111,9 @@ infixr 5 :>
 -- | A 'ShiftedExp' represents an expression that's been shifted into a deeper
 -- context. Note the non-prenex kind, necessary so that Lets can be parameterized
 -- by a partial application of this type.
-newtype ShiftedExp base_ctx :: forall n. Ctx n -> Ty -> Type where
-  ShiftedExp :: Exp (prefix +++ base_ctx) ty
-             -> ShiftedExp base_ctx prefix ty
+-- newtype ShiftedExp base_ctx :: forall n. Ctx n -> Ty -> Type where
+--   ShiftedExp :: Exp (prefix +++ base_ctx) ty
+--              -> ShiftedExp base_ctx prefix ty
 
 (!!!) :: Vec a n -> Fin n -> a
 -- RAE: Oy. Need to reverse order b/c of laziness
@@ -239,9 +239,9 @@ extractResType (_ ::-> res) = res
 -- | The identity of a de Bruijn index comes from the difference between the size
 -- of the context and the value of the index. We use this when hashing so that,
 -- say, (#2 #3) is recognized as the same expression as the body of λ.(#3 #4).
-hashDeBruijn :: forall n (x :: Ty) (xs :: Ctx n). Int -> Elem xs x -> SNat n -> Int
-hashDeBruijn salt EZ     size_ctx         = hashWithSalt salt (snatToInt size_ctx)
-hashDeBruijn salt (ES e) (SSucc size_ctx) = hashDeBruijn salt e size_ctx
+-- hashDeBruijn :: forall n (x :: Ty) (xs :: Ctx n). Int -> Elem xs x -> SNat n -> Int
+-- hashDeBruijn salt EZ     size_ctx         = hashWithSalt salt (snatToInt size_ctx)
+-- hashDeBruijn salt (ES e) (SSucc size_ctx) = hashDeBruijn salt e size_ctx
 
 -- instance KnownLength ctx => Hashable (Exp ctx ty) where
 --   hashWithSalt s = go
@@ -273,13 +273,13 @@ class IHashable t where
         -- from hashable package
         defaultSalt = -2578643520546668380  -- 0xdc36d1615b7400a4
 
-instance IHashable Proxy where
-  ihashWithSalt = hashWithSalt
-  ihash = hash
+-- instance IHashable Proxy where
+--   ihashWithSalt = hashWithSalt
+--   ihash = hash
 
-instance Hashable a => IHashable (Const a) where
-  ihashWithSalt s (Const x) = hashWithSalt s x
-  ihash (Const x) = hash x
+-- instance Hashable a => IHashable (Const a) where
+--   ihashWithSalt s (Const x) = hashWithSalt s x
+--   ihash (Const x) = hash x
 
 -- instance KnownLength ctx => IHashable (Exp ctx) where
 --   ihashWithSalt = hashWithSalt
