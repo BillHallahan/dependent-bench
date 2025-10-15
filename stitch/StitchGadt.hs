@@ -5,6 +5,7 @@
              ViewPatterns, LambdaCase, EmptyCase, ExplicitForAll, DeriveAnyClass #-}
 
 -- This file gather GADTs in stitch
+-- stitch paper can be found in: https://dl.acm.org/doi/pdf/10.1145/3406088.3409015
 -- stitch repo can be found in: https://gitlab.com/goldfirere/stitch/-/tree/hs2020 
 module StitchGadt where
 

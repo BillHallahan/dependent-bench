@@ -1,5 +1,6 @@
 -- This file aims to explore Gadts in rebound 
 -- rebound can be found in: https://github.com/sweirich/rebound
+-- the corresponding paper can be found: https://arxiv.org/pdf/2509.13261
 module ReboundGadt where
 import Data.Kind
 

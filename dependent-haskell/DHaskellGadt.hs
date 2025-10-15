@@ -2,6 +2,7 @@
     RankNTypes, PolyKinds, ScopedTypeVariables, FlexibleInstances #-}
 module DHaskellGadt where 
 -- This file aims to explore GADT in dependent-haskell
+-- The corresponding paper can be found in https://dl.acm.org/doi/pdf/10.1145/2578854.2503786?casa_token=jYtk8m_Nxz8AAAAA:Iz-[…]aD0QBT2fUGHcjKA9pTqwy9izlO7F3PbmFzJ2gMF-e2J3uHvUWfOZfpRj3GqKwzw
 -- dependent-haskell github: https://github.com/slindley/dependent-haskell/tree/master 
 
 import Data.Monoid
