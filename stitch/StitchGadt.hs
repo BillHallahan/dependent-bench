@@ -108,6 +108,12 @@ data Vec :: Type -> Nat -> Type where
 infixr 5 :>
 
 -- deriving instance Show a => Show (Vec a n)
+-- | A 'ShiftedExp' represents an expression that's been shifted into a deeper
+-- context. Note the non-prenex kind, necessary so that Lets can be parameterized
+-- by a partial application of this type.
+newtype ShiftedExp base_ctx :: forall n. Ctx n -> Ty -> Type where
+  ShiftedExp :: Exp (prefix +++ base_ctx) ty
+             -> ShiftedExp base_ctx prefix ty
 
 (!!!) :: Vec a n -> Fin n -> a
 -- RAE: Oy. Need to reverse order b/c of laziness
@@ -315,6 +321,11 @@ deriving instance Show (Length xs)
 data Ex :: (k -> Type) -> Type where
   Ex :: a i -> Ex a
 
+-- instance (forall i. Read (a i)) => Read (Ex a) where
+--   readsPrec prec s = fmap (first Ex) $ readsPrec prec s
+
+-- instance (forall i. Show (a i)) => Show (Ex a) where
+--   show (Ex x) = show x
 -- https://gitlab.com/goldfirere/stitch/-/blob/main/src/Language/Stitch/Data/Exists.hs#L37-40
 -- | Like 'Ex', but stores a singleton describing the
 -- existentially bound index
