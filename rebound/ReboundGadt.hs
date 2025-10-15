@@ -1,8 +1,14 @@
 -- This file aims to explore Gadts in rebound 
 -- rebound can be found in: https://github.com/sweirich/rebound
 -- the corresponding paper can be found: https://arxiv.org/pdf/2509.13261
+{-# LANGUAGE DataKinds, GADTs, KindSignatures, 
+  TypeFamilies, TypeOperators, StandaloneDeriving, 
+  DeriveGeneric, GeneralizedNewtypeDeriving, FlexibleInstances, 
+  FlexibleContexts, UndecidableInstances, ScopedTypeVariables, LambdaCase, InstanceSigs #-}
+
 module ReboundGadt where
 import Data.Kind
+import GHC.Generics (Generic)
 
 
 data Nat = Z | S Nat
